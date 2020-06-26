@@ -10,7 +10,11 @@
 使用例子：
 
 	libWinHttpClient HttpClient;
-	HttpClient.ConnectServer(L"192.168.3.161", 80);
+	// HTTP
+	HttpClient.ConnectServer(L"192.168.3.161", 80, FALSE); 
+
+	// HTTPS
+	// HttpClient.ConnectServer(L"192.168.3.161", 443, TRUE); 
 	std::vector<BYTE> bResonse;
 	HttpClient.DownLoadFile(L"/icons/openlogo-75.png", TEXT("openlogo-75.png"));
 
@@ -28,6 +32,8 @@ class libWinHttpClient
 {
 
 private:
+	BOOL isHTTPS = FALSE;
+	DWORD dwRequestFlags =  WINHTTP_FLAG_ESCAPE_DISABLE;
 	HINTERNET   hSession = NULL;
 	HINTERNET	hConnect = NULL;
 	HINTERNET	hRequest = NULL;
@@ -39,7 +45,7 @@ private:
 public:
 	libWinHttpClient(); // 初始化Session
 	// 连接服务器
-	BOOL ConnectServer(LPCWSTR pswzServerName, INTERNET_PORT nServerPort);
+	BOOL ConnectServer(LPCWSTR pswzServerName, INTERNET_PORT nServerPort, BOOL isHTTPS);
 	BOOL HttpAddHeaders(LPCWSTR szHeader); // 添加HTTP头
 	BOOL HttpAddHeaders(std::vector<std::wstring> szHeaders); // 添加多个HTTP头
 	// 发送GET请求

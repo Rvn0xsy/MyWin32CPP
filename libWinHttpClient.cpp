@@ -1,6 +1,6 @@
 #include "libWinHttpClient.h"
 
-BOOL libWinHttpClient::ConnectServer(LPCWSTR pswzServerName, INTERNET_PORT nServerPort)
+BOOL libWinHttpClient::ConnectServer(LPCWSTR pswzServerName, INTERNET_PORT nServerPort, BOOL isHTTPS)
 {
 	if (hSession == NULL) {
 		// Session初始化错误！
@@ -8,8 +8,19 @@ BOOL libWinHttpClient::ConnectServer(LPCWSTR pswzServerName, INTERNET_PORT nServ
 	}
 	hConnect = WinHttpConnect(hSession, pswzServerName, nServerPort, 0);
 	if (hConnect != NULL) {
+		this->isHTTPS = isHTTPS;
+		if (isHTTPS) {
+			DWORD dwFlags = SECURITY_FLAG_IGNORE_UNKNOWN_CA |
+				SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE |
+				SECURITY_FLAG_IGNORE_CERT_CN_INVALID |
+				SECURITY_FLAG_IGNORE_CERT_DATE_INVALID;
+			WinHttpSetOption(hRequest, WINHTTP_OPTION_SECURITY_FLAGS, &dwFlags, sizeof(dwFlags));
+			WinHttpSetOption(hRequest, WINHTTP_OPTION_CLIENT_CERT_CONTEXT, WINHTTP_NO_CLIENT_CERT_CONTEXT, 0);
+			this->dwRequestFlags |= WINHTTP_FLAG_SECURE;
+		}
 		return TRUE;
 	}
+	
 	return FALSE;
 }
 
@@ -139,6 +150,7 @@ DWORD libWinHttpClient::HttpGet(LPCWSTR pszServerURI, std::vector<BYTE>& wszResp
 	}
 	// 连接成功
 	printf("[+] hSession WinHttpConnect Host \n");
+
 	// 创建请求对象
 	hRequest = WinHttpOpenRequest(
 		hConnect,
@@ -147,8 +159,9 @@ DWORD libWinHttpClient::HttpGet(LPCWSTR pszServerURI, std::vector<BYTE>& wszResp
 		NULL,
 		WINHTTP_NO_REFERER, // 没有Referer
 		WINHTTP_DEFAULT_ACCEPT_TYPES,
-		WINHTTP_FLAG_ESCAPE_DISABLE
+		this->dwRequestFlags
 	);
+
 	// 设置HTTP头
 	this->SetHeaders();
 
@@ -203,7 +216,7 @@ DWORD libWinHttpClient::HttpPost(LPCWSTR pszServerURI, LPVOID pszSendData, DWORD
 		NULL,
 		WINHTTP_NO_REFERER, // 没有Referer
 		WINHTTP_DEFAULT_ACCEPT_TYPES,
-		WINHTTP_FLAG_ESCAPE_DISABLE
+		this->dwRequestFlags
 	);
 	// 设置HTTP头
 	this->SetHeaders();
