@@ -10,3 +10,6 @@
 - [Windows下C++连接WMI对象读取信息](https://github.com/Rvn0xsy/MyWin32CPP/blob/master/WMIClass.cpp)
 - [Windows下C++实现窃取进程令牌来派生新的进程](https://github.com/Rvn0xsy/MyWin32CPP/blob/master/JustAdminToken.cpp)
 - [Windows下C++实现HTTP协议客户端与文件下载](https://github.com/Rvn0xsy/MyWin32CPP/blob/master/libWinHttpClient.cpp)
+- [Windows下C++实现XML格式添加任务计划](https://github.com/Rvn0xsy/MyWin32CPP/blob/master/RegisterTaskScheduler.cpp)
+
+
